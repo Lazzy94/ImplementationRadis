@@ -1,20 +1,18 @@
 from gevent import socket
 from gevent.pool import Pool
 from gevent.server import StreamServer
+from expiring_dict import ExpiringDict
 from collections import namedtuple
 from io import BytesIO
 import logging
-from expiring_dict import ExpiringDict
 
 logger = logging.getLogger(__name__)
 
 
-class CommandError(Exception):
-    pass
+class CommandError(Exception): pass
 
 
-class Disconnect(Exception):
-    pass
+class Disconnect(Exception): pass
 
 
 Error = namedtuple('Error', ('message',))
@@ -78,16 +76,18 @@ class ProtocolHandler(object):
         socket_file.flush()
 
     def _write(self, buf, data):
+        logger.info(f'"_write": {data, type(data)}')
         if isinstance(data, str):
             data = data.encode('utf-8')
+        logger.info(f'"_write": {data, type(data)}')
         if isinstance(data, bytes):
-            buf.write(f'${len(data)}\r\n{data.decode("utf-8")}\r\n'.encode('utf-8'))
+            buf.write(f'${len(data)}\r\n{data.decode("utf-8")}\r\n'.encode('ascii'))
         elif isinstance(data, int):
             buf.write(bytes(':%s\r\n' % data, 'utf-8'))
         elif isinstance(data, Error):
             buf.write(f'-{data.message}\r\n'.encode("utf-8"))
         elif isinstance(data, (list, tuple)):
-            buf.write(f'*{len(data)}\r\n'.encode('utf-8'))
+            buf.write(f'*{len(data)}\r\n'.encode("utf-8"))
             for item in data:
                 self._write(buf, item)
         elif isinstance(data, dict):
@@ -128,6 +128,7 @@ class Server(object):
     def connection_handler(self, conn, address):
         logger.info('Connection received: %s:%s' % address)
         socket_file = conn.makefile('rwb')
+
         while True:
             try:
                 data = self._protocol.handle_request(socket_file)
@@ -229,6 +230,9 @@ class Client(object):
 
     def flush(self):
         return self.execute('FLUSH')
+
+    def keys(self):
+        return self.execute('KEYS')
 
     def mget(self, *keys):
         return self.execute('MGET', *keys)
