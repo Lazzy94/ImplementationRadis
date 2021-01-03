@@ -9,16 +9,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class CommandError(Exception): pass
+class CommandError(Exception):
+    pass
 
 
-class Disconnect(Exception): pass
+class Disconnect(Exception):
+    pass
 
 
 Error = namedtuple('Error', ('message',))
 
 
-class ProtocolHandler(object):
+class DataHandler(object):
     def __init__(self):
         self.handlers = {
             '+': self.handle_simple_string,
@@ -74,7 +76,7 @@ class ProtocolHandler(object):
         buf.seek(0)
         socket_file.write(buf.getvalue())
         socket_file.flush()
-
+#TODO не понимаю как сделать строчки декода одинаковые(пытаюсь менять, ломается приложение)
     def _write(self, buf, data):
         logger.info(f'"_write": {data, type(data)}')
         if isinstance(data, str):
@@ -102,14 +104,14 @@ class ProtocolHandler(object):
 
 
 class Server(object):
-    def __init__(self, host='127.0.0.1', port=31337, max_clients=64):
+    def __init__(self, host='127.0.0.1', port=31337, max_clients=15):
         self._pool = Pool(max_clients)
         self._server = StreamServer(
             (host, port),
             self.connection_handler,
             spawn=self._pool)
 
-        self._protocol = ProtocolHandler()
+        self._protocol = DataHandler()
         self._kv = ExpiringDict()
 
         self._commands = self.get_commands()
@@ -118,12 +120,13 @@ class Server(object):
         return {
             'GET': self.get,
             'SET': self.set,
-            'DELETE': self.delete,
+            'DEL': self.delete,
             'KEYS': self.keys,
-            'FLUSH': self.flush,
+            'FLUSHDB': self.flush,
             'EXPIRE': self.expire,
-            'MGET': self.mget,
-            'MSET': self.mset}
+            # 'HGET': self.hget,
+            # 'HSET': self.hset
+        }
 
     def connection_handler(self, conn, address):
         logger.info('Connection received: %s:%s' % address)
@@ -133,7 +136,7 @@ class Server(object):
             try:
                 data = self._protocol.handle_request(socket_file)
             except Disconnect:
-                print('Client went away: %s:%s' % address)
+                logger.info('Client went away: %s:%s' % address)
                 break
             try:
                 resp = self.get_response(data)
@@ -171,7 +174,7 @@ class Server(object):
     def set(self, key, value):
         self._kv[key] = value
         logger.info(f'успешно записали ключ - {key}, значние - {value}')
-        return 1
+        return '1'
 
     def delete(self, key):
         if key in self._kv:
@@ -180,12 +183,13 @@ class Server(object):
         return 0
 
     def keys(self):
+        #TODO не работает метод KEYS
         return list(self._kv.keys())
 
     def flush(self):
         kvlen = len(self._kv)
         self._kv.clear()
-        return kvlen
+        return str(kvlen)
 
     def expire(self, key, ttl):
         value = self._kv.get(key, None)
@@ -195,50 +199,14 @@ class Server(object):
             return 1
         return 0
 
-    def mget(self, *keys):
-        return [self._kv.get(key) for key in keys]
-
-    def mset(self, *items):
-        data = zip(items[::2], items[1::2])
-        for key, value in data:
-            self._kv[key] = value
-        return len(data)
-
-
-class Client(object):
-    def __init__(self, host='127.0.0.1', port=31337):
-        self._protocol = ProtocolHandler()
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket.connect((host, port))
-        self._fh = self._socket.makefile('rwb')
-
-    def execute(self, *args):
-        self._protocol.write_response(self._fh, args)
-        resp = self._protocol.handle_request(self._fh)
-        if isinstance(resp, Error):
-            raise CommandError(resp.message)
-        return resp
-
-    def get(self, key):
-        return self.execute('GET', key)
-
-    def set(self, key, value):
-        return self.execute('SET', key, value)
-
-    def delete(self, key):
-        return self.execute('DELETE', key)
-
-    def flush(self):
-        return self.execute('FLUSH')
-
-    def keys(self):
-        return self.execute('KEYS')
-
-    def mget(self, *keys):
-        return self.execute('MGET', *keys)
-
-    def mset(self, *items):
-        return self.execute('MSET', *items)
+    # def hget(self, *keys):
+    #     return [self._kv.get(key) for key in keys]
+    #
+    # def hset(self, *items):
+    #     data = zip(items[::2], items[1::2])
+    #     for key, value in data:
+    #         self._kv[key] = value
+    #     return len(data)
 
 
 if __name__ == '__main__':
