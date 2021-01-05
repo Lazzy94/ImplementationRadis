@@ -1,9 +1,10 @@
-from gevent import socket
+import re
 from gevent.pool import Pool
 from gevent.server import StreamServer
 from expiring_dict import ExpiringDict
 from collections import namedtuple
 from io import BytesIO
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,6 @@ class DataHandler(object):
             raise Disconnect()
 
         try:
-            logger.info(f'{first_byte!r}, {self.handlers[first_byte].__name__!r}')
             return self.handlers[first_byte](socket_file)
         except KeyError:
             raise CommandError('bad request')
@@ -50,7 +50,6 @@ class DataHandler(object):
 
     def handle_integer(self, socket_file):
         data = int(socket_file.readline().decode('utf-8').rstrip('\r\n'))
-        logger.info(f'{type(data)}')
         return data
 
     def handle_string(self, socket_file):
@@ -62,7 +61,10 @@ class DataHandler(object):
 
     def handle_array(self, socket_file):
         num_elements = int(socket_file.readline().decode('utf-8').rstrip('\r\n'))
-        return [self.handle_request(socket_file) for _ in range(num_elements)]
+        r = []
+        for _ in range(num_elements):
+            r.append(self.handle_request(socket_file))
+        return r
 
     def handle_dict(self, socket_file):
         num_items = int(socket_file.readline().decode('utf-8').rstrip('\r\n'))
@@ -76,16 +78,14 @@ class DataHandler(object):
         buf.seek(0)
         socket_file.write(buf.getvalue())
         socket_file.flush()
-#TODO не понимаю как сделать строчки декода одинаковые(пытаюсь менять, ломается приложение)
+
     def _write(self, buf, data):
-        logger.info(f'"_write": {data, type(data)}')
         if isinstance(data, str):
-            data = data.encode('utf-8')
-        logger.info(f'"_write": {data, type(data)}')
-        if isinstance(data, bytes):
-            buf.write(f'${len(data)}\r\n{data.decode("utf-8")}\r\n'.encode('ascii'))
+            buf.write(f'${len(data)}\r\n{data}\r\n'.encode('utf-8'))
+        elif isinstance(data, bytes):
+            buf.write(f'${len(data)}\r\n{data.decode("utf-8")}\r\n'.encode('utf-8'))
         elif isinstance(data, int):
-            buf.write(bytes(':%s\r\n' % data, 'utf-8'))
+            buf.write(f':{data}\r\n'.encode('utf-8'))
         elif isinstance(data, Error):
             buf.write(f'-{data.message}\r\n'.encode("utf-8"))
         elif isinstance(data, (list, tuple)):
@@ -93,21 +93,27 @@ class DataHandler(object):
             for item in data:
                 self._write(buf, item)
         elif isinstance(data, dict):
-            buf.write('%%%s\r\n' % len(data))
+            buf.write(f'%{len(data)}\r\n')
             for key in data:
                 self._write(buf, key)
                 self._write(buf, data[key])
         elif data is None:
-            buf.write(bytes('$-1\r\n', 'utf-8'))
+            buf.write('$-1\r\n'.encode('utf-8'))
         else:
             raise CommandError('unrecognized type: %s' % type(data))
 
 
 class Server(object):
-    def __init__(self, host='127.0.0.1', port=31337, max_clients=15):
-        self._pool = Pool(max_clients)
+    def __init__(self, host=None, port=None, max_clients=None):
+        if not host:
+            host = os.getenv('HOST', '0.0.0.0')
+        if not port:
+            port = os.getenv('PORT', 31337)
+        if not max_clients:
+            max_clients = os.getenv('MAX_CLIENTS', 15)
+        self._pool = Pool(int(max_clients))
         self._server = StreamServer(
-            (host, port),
+            (host, int(port)),
             self.connection_handler,
             spawn=self._pool)
 
@@ -124,8 +130,13 @@ class Server(object):
             'KEYS': self.keys,
             'FLUSHDB': self.flush,
             'EXPIRE': self.expire,
-            # 'HGET': self.hget,
-            # 'HSET': self.hset
+            'HGET': self.hget,
+            'HSET': self.hset,
+            'LSET': self.lset,
+            'RPUSH': self.rpush,
+            'LPUSH': self.lpush,
+            'LRANGE': self.lrange,
+            'LINDEX': self.lindex
         }
 
     def connection_handler(self, conn, address):
@@ -164,16 +175,17 @@ class Server(object):
             raise CommandError('Unrecognized command: %s' % command)
         else:
             logger.debug('Received %s', command)
-        logger.info(f'{data}, type {type(data)}')
-        return self._commands[command](*data[1:])
+        try:
+            response = self._commands[command](*data[1:])
+        except TypeError:
+            raise CommandError(f'ERR wrong number of arguments for {command.lower()} command')
+        return response
 
     def get(self, key):
-        logger.info(f'{self._kv.get(key)}')
         return self._kv.get(key)
 
     def set(self, key, value):
         self._kv[key] = value
-        logger.info(f'успешно записали ключ - {key}, значние - {value}')
         return '1'
 
     def delete(self, key):
@@ -182,9 +194,14 @@ class Server(object):
             return 1
         return 0
 
-    def keys(self):
-        #TODO не работает метод KEYS
-        return list(self._kv.keys())
+    def keys(self, pattern):
+        r = []
+        if pattern == '*':
+            pattern = '\w*'
+        for k in self._kv.keys():
+            if re.match(pattern, k):
+                r.append(k)
+        return r
 
     def flush(self):
         kvlen = len(self._kv)
@@ -199,14 +216,46 @@ class Server(object):
             return 1
         return 0
 
-    # def hget(self, *keys):
-    #     return [self._kv.get(key) for key in keys]
-    #
-    # def hset(self, *items):
-    #     data = zip(items[::2], items[1::2])
-    #     for key, value in data:
-    #         self._kv[key] = value
-    #     return len(data)
+    def hset(self, key, field, value):
+        self._kv.setdefault(key, {})
+        self._kv[key][field] = value
+        return 1
+
+    def hget(self, k, field):
+        if self._kv.get(k):
+            return self._kv[k].get(field)
+
+    def lset(self, key, index, value):
+        self._kv.setdefault(key, [])
+        self._kv[key][int(index)] = value
+        return 'OK'
+
+    def rpush(self, key, *value):
+        self._kv.setdefault(key, [])
+        for v in value:
+            self._kv[key].append(v)
+        return len(self._kv[key])
+
+    def lpush(self, key, *value):
+        self._kv.setdefault(key, [])
+        for v in value:
+            self._kv[key].insert(0, v)
+        return len(self._kv[key])
+
+    def lrange(self, key, start, end):
+        if isinstance(self._kv.get(key), list):
+            if end == '-1':
+                return self._kv[key][int(start):]
+            return self._kv[key][int(start):int(end) + 1]
+        return None
+
+    def lindex(self, key, index):
+        if isinstance(self._kv.get(key), list):
+            try:
+                return self._kv[key][int(index)]
+            except IndexError:
+                return None
+        return None
 
 
 if __name__ == '__main__':
