@@ -1,5 +1,5 @@
 from unittest import TestCase
-from ImplementationRedis import Server
+from ..ImplementationRedis import Server
 from parameterized import parameterized
 import time
 
