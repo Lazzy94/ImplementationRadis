@@ -127,8 +127,7 @@ class TestServer(TestCase):
         ('my_list', 0, 3)])
     def test_lrange(self, key, start, end):
         self.server.rpush('my_list', '1', '2', '3', '4')
-        self.server.lrange(key, start, end)
-        self.assertEqual(self.server._kv[key][start:end], self.server._kv[key][start:end])
+        self.assertEqual(self.server._kv[key][start:end + 1], self.server.lrange(key, start, end))
 
     @parameterized.expand([
         ('my_list', 0),
@@ -136,5 +135,4 @@ class TestServer(TestCase):
         ('my_list', 2)])
     def test_lindex(self, key, index):
         self.server.rpush('my_list', '1', '2', '3', '4')
-        self.server.lindex(key, index)
-        self.assertEqual(self.server._kv[key][index], self.server._kv[key][index])
+        self.assertEqual(self.server._kv[key][index], self.server.lindex(key, index))
