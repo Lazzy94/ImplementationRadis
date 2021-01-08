@@ -3,8 +3,8 @@ services:
   implementation_redis:
     build: .
     ports:
-      - "6379:6379"
+      - "31337:31337"
     environment:
-      PORT: 6379 # default port 31337
-      HOST: '0.0.0.0' # default host 31337
+      PORT: 31337
+      HOST: '0.0.0.0'
       MAX_CLIENTS: 15

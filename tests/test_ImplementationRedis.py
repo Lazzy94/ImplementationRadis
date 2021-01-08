@@ -96,12 +96,11 @@ class TestServer(TestCase):
         self.assertEqual(self.server.hget(key, field), value)
 
     @parameterized.expand([
-        ('my_list', 1, '1'),
-        ('my_list', 1, '2'),
-        ('my_list', 1, '3')])
-    def test_lset(self, key, index, value):
-        self.server.rpush('my_list', '4')
-        self.server.rpush('my_list', '5')
+        ('my_list', [1, 2, 3, 4], 1, '1'),
+        ('my_list', [1, 2, 3, 4], 1, '2'),
+        ('my_list', [1, 2, 3, 4], 1, '3')])
+    def test_lset(self, key, key_data, index, value):
+        self.server._kv[key] = key_data
         self.server.lset(key, index, value)
         self.assertEqual(self.server._kv[key][index], value)
 
@@ -122,17 +121,19 @@ class TestServer(TestCase):
         self.assertEqual(self.server._kv[key], list(reversed(value)))
 
     @parameterized.expand([
-        ('my_list', 0, -1),
-        ('my_list', 1, 3),
-        ('my_list', 0, 3)])
-    def test_lrange(self, key, start, end):
-        self.server.rpush('my_list', '1', '2', '3', '4')
-        self.assertEqual(self.server._kv[key][start:end + 1], self.server.lrange(key, start, end))
+        ('my_list', [1, 2, 3, 4], '0', '-1', [1, 2, 3, 4]),
+        ('my_list', [1, 2, 3, 4], '1', '3', [2, 3, 4]),
+        ('my_list', [1, 2, 3, 4], '0', '3', [1, 2, 3, 4])])
+    def test_lrange(self, key, value, start, end, expected):
+        self.server._kv[key] = value
+        actual = self.server.lrange(key, start, end)
+        self.assertEqual(expected, actual)
 
     @parameterized.expand([
-        ('my_list', 0),
-        ('my_list', 1),
-        ('my_list', 2)])
-    def test_lindex(self, key, index):
-        self.server.rpush('my_list', '1', '2', '3', '4')
-        self.assertEqual(self.server._kv[key][index], self.server.lindex(key, index))
+        ('my_list', [1, 2, 3, 4], 0, 1),
+        ('my_list', [1, 2, 3, 4], 1, 2),
+        ('my_list', [1, 2, 3, 4], 2, 3)])
+    def test_lindex(self, key, value, index, expected):
+        self.server._kv[key] = value
+        actual = self.server.lindex(key, index)
+        self.assertEqual(expected, actual)
