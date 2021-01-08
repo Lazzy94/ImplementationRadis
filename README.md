@@ -1,4 +1,7 @@
 # ImplementationRedis #
+
+[![Build Status](https://travis-ci.com/Lazzy94/ImplementationRedis.svg?branch=master)](https://travis-ci.com/Lazzy94/ImplementationRedis)
+
 Для запуска приложения нужно выполнить команду:
 
 ```docker-compose up -d --build  ```
